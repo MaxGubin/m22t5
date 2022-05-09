@@ -6,7 +6,7 @@ from functools import partial
 from typing import Sequence, Dict
 
 
-def convert_to_features(tokenizer: PreTrainedTokenizer, example_batch: Sequence[Dict[str, str]]) -> Dict[str, torch.Tensor]:
+def convert_to_features(tokenizer: PreTrainedTokenizer, example_batch: Sequence[Dict[str, str]], max_length: int) -> Dict[str, torch.Tensor]:
     """Tokenizes texts and creates an input in the format for T5 models"""
     def add_prefix_eos_to_example(example):
         return f"grammar: {example['source']}", example['corrected']
@@ -16,7 +16,7 @@ def convert_to_features(tokenizer: PreTrainedTokenizer, example_batch: Sequence[
         source, corrected = add_prefix_eos_to_example(example)
         source_batch.append(source)
         corrected_batch.append(corrected)
-    tokenizer_call = partial(tokenizer.batch_encode_plus, truncation=True, max_length=512, padding='max_length', return_tensors='pt')
+    tokenizer_call = partial(tokenizer.batch_encode_plus, truncation=True, max_length=max_length, padding='max_length', return_tensors='pt')
     input_encodings = tokenizer_call(source_batch)
     target_encodings = tokenizer_call(corrected_batch)
     return {
@@ -27,7 +27,7 @@ def convert_to_features(tokenizer: PreTrainedTokenizer, example_batch: Sequence[
         'target_attention_mask': target_encodings['attention_mask'],
     }
 
-def create_dataset(tokenizer:PreTrainedTokenizer, dataset_path:str , batch_size: int):
+def create_dataset(tokenizer:PreTrainedTokenizer, dataset_path:str , batch_size: int, max_length: int):
     """Loaded a dataset and sample batches."""
     accumulator = []
     with open(dataset_path, "rt") as fls:
@@ -39,5 +39,5 @@ def create_dataset(tokenizer:PreTrainedTokenizer, dataset_path:str , batch_size:
         for i in range(num_batches):
             start_index = i*batch_size
             end_index = min(len(accumulator), start_index+batch_size)
-            yield convert_to_features(tokenizer, accumulator[start_index: end_index])    
+            yield convert_to_features(tokenizer, accumulator[start_index: end_index], max_length)    
     
