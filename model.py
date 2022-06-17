@@ -41,6 +41,7 @@ from transformers import (
 )
 from transformers.utils import get_full_repo_name, is_offline_mode
 
+import dataset
 
 logger = logging.getLogger(__name__)
 
@@ -245,8 +246,8 @@ class DataTrainingArguments:
         if self.train_file is None or self.validation_file is None:
             raise ValueError("Both training/validation file must be provided.")
         else:
-        if self.val_max_target_length is None:
-            self.val_max_target_length = self.max_target_length
+            if self.val_max_target_length is None:
+                self.val_max_target_length = self.max_target_length
 
 
 class TrainState(train_state.TrainState):
@@ -394,25 +395,6 @@ def main():
     prefix = data_args.source_prefix if data_args.source_prefix is not None else ""
 
 
-    # Get the column names for input/target.
-    dataset_columns = summarization_name_mapping.get(data_args.dataset_name, None)
-    if data_args.text_column is None:
-        text_column = dataset_columns[0] if dataset_columns is not None else column_names[0]
-    else:
-        text_column = data_args.text_column
-        if text_column not in column_names:
-            raise ValueError(
-                f"--text_column' value '{data_args.text_column}' needs to be one of: {', '.join(column_names)}"
-            )
-    if data_args.summary_column is None:
-        summary_column = dataset_columns[1] if dataset_columns is not None else column_names[1]
-    else:
-        summary_column = data_args.summary_column
-        if summary_column not in column_names:
-            raise ValueError(
-                f"--summary_column' value '{data_args.summary_column}' needs to be one of: {', '.join(column_names)}"
-            )
-
     # Temporarily set max_target_length for training.
     max_target_length = data_args.max_target_length
 
@@ -421,6 +403,12 @@ def main():
     # for that dynamically import the `shift_tokens_right` function from the model file
     model_module = __import__(model.__module__, fromlist=["shift_tokens_tight"])
     shift_tokens_right_fn = getattr(model_module, "shift_tokens_right")
+
+
+    # Store some constant
+    num_epochs = int(training_args.num_train_epochs)
+    train_batch_size = int(training_args.per_device_train_batch_size) * jax.device_count()
+    eval_batch_size = int(training_args.per_device_eval_batch_size) * jax.device_count()
 
     # Setting padding="max_length" as we need fixed length inputs for jitted functions
     def preprocess_function(examples):
@@ -449,20 +437,12 @@ def main():
         return model_inputs
 
     if training_args.do_train:
-        if "train" not in dataset:
-            raise ValueError("--do_train requires a train dataset")
-        train_dataset = dataset["train"]
+        logger.info(" Preparing dataset")
+        train_dataset = [x for x in dataset.create_dataset(tokenizer, data_args.train_file, train_batch_size, data_args.max_source_length)]
         if data_args.max_train_samples is not None:
             max_train_samples = min(len(train_dataset), data_args.max_train_samples)
             train_dataset = train_dataset.select(range(max_train_samples))
-        train_dataset = train_dataset.map(
-            preprocess_function,
-            batched=True,
-            num_proc=data_args.preprocessing_num_workers,
-            remove_columns=column_names,
-            load_from_cache_file=not data_args.overwrite_cache,
-            desc="Running tokenizer on train dataset",
-        )
+        logger.info(" The dataset is done")
 
     if training_args.do_eval:
         max_target_length = data_args.val_max_target_length
@@ -498,8 +478,8 @@ def main():
             desc="Running tokenizer on prediction dataset",
         )
 
-    # Metric
-    metric = load_metric("rouge")
+    # Metric (replace with another metrics)
+    #metric = load_metric("rouge")
 
     def postprocess_text(preds, labels):
         preds = [pred.strip() for pred in preds]
@@ -518,7 +498,7 @@ def main():
         # Some simple post-processing
         decoded_preds, decoded_labels = postprocess_text(decoded_preds, decoded_labels)
 
-        result = metric.compute(predictions=decoded_preds, references=decoded_labels, use_stemmer=True)
+        result = {} # metric.compute(predictions=decoded_preds, references=decoded_labels, use_stemmer=True)
         # Extract a few results from ROUGE
         result = {key: value.mid.fmeasure * 100 for key, value in result.items()}
 
@@ -549,10 +529,7 @@ def main():
     rng = jax.random.PRNGKey(training_args.seed)
     rng, dropout_rng = jax.random.split(rng)
 
-    # Store some constant
-    num_epochs = int(training_args.num_train_epochs)
-    train_batch_size = int(training_args.per_device_train_batch_size) * jax.device_count()
-    eval_batch_size = int(training_args.per_device_eval_batch_size) * jax.device_count()
+    # A few more training constants
     steps_per_epoch = len(train_dataset) // train_batch_size
     total_train_steps = steps_per_epoch * num_epochs
 

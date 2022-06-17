@@ -1,0 +1,9 @@
+{
+"train_file":  "data/converted.test.json",  
+"test_file":  "data/converted.test.json",  
+"validation_file":  "data/converted.dev.json",
+"output_dir":   "output_dir",
+"model_name_or_path": "facebook/bart-base",
+"do_train": true,
+"per_device_train_batch_size": 4
+}
